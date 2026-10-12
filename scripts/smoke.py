@@ -33,7 +33,7 @@ async def retrieval_only() -> int:
     from app import embeddings
     from app.retrieval import retrieve
 
-    embeddings.load_model()
+    embeddings.init_client()
     failures = 0
     for question, expected_file, _ in CASES:
         hits = await retrieve(question, 4)

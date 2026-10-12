@@ -30,12 +30,16 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 60.0
     llm_max_retries: int = 2
 
-    # --- embeddings --------------------------------------------------------
-    # Local ONNX model via fastembed: free, no API key, 384-dim vectors.
-    # The dimension MUST match the vector(N) column. Change the model without
-    # changing this (and re-ingesting) and every insert/query fails.
-    embed_model: str = "BAAI/bge-small-en-v1.5"
-    embed_dim: int = 384
+    # --- embeddings (Voyage AI) ---------------------------------------------
+    voyage_api_key: str | None = None
+    embed_model: str = "voyage-3.5-lite"
+    # The dimension MUST match the vector(N) column. Change it without
+    # recreating the table and re-ingesting, and every insert/query fails.
+    # voyage-3.5-lite supports 256 / 512 / 1024 / 2048.
+    embed_dim: int = 1024
+    embed_batch_size: int = 128
+    embed_timeout_s: float = 30.0
+    embed_max_retries: int = 3
 
     # --- chunking ----------------------------------------------------------
     chunk_size: int = 800      # characters, not tokens
@@ -45,9 +49,10 @@ class Settings(BaseSettings):
     top_k: int = 4
     # Cosine similarity floor. Below this a chunk is "not really relevant",
     # and answering from it is how a RAG system hallucinates confidently.
-    # Calibrated, not guessed: with bge-small, on-topic questions scored
-    # 0.75-0.84 and an off-topic one still scored 0.41. A floor of 0.35 let
-    # the off-topic question through. Re-measure if the embed model changes.
+    # Calibrate, don't guess: each embedding model has its own score range.
+    # (With the earlier local bge-small model an off-topic question scored
+    # 0.41, so a 0.35 floor let it through.) Re-measure with
+    # `scripts/smoke.py --retrieval` whenever the embed model changes.
     min_similarity: float = 0.55
     # Budget guard: hard cap on context characters sent to the LLM.
     max_context_chars: int = 12_000

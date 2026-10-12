@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 import anthropic
+import voyageai.error
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import text
@@ -39,7 +40,10 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 async def lifespan(app: FastAPI):
     # Startup: everything slow happens once here, never per request.
     await init_db()
-    embeddings.load_model()
+    embeddings.init_client()
+    if not settings.voyage_api_key:
+        log(logger, "VOYAGE_API_KEY not set: ingest and retrieval will fail",
+            logging.WARNING)
     if not settings.anthropic_api_key:
         # Without this line, a missing key surfaces later as an opaque
         # TypeError ("Could not resolve authentication method") inside the
@@ -102,6 +106,28 @@ async def llm_unreachable(request: Request, exc: anthropic.APIConnectionError):
                          "request_id": request_id_var.get()}, status_code=502)
 
 
+@app.exception_handler(voyageai.error.RateLimitError)
+async def embed_rate_limited(request: Request, exc: voyageai.error.RateLimitError):
+    return JSONResponse({"detail": "embedding API rate limited, retry shortly",
+                         "request_id": request_id_var.get()}, status_code=503,
+                        headers={"retry-after": "10"})
+
+
+@app.exception_handler(voyageai.error.AuthenticationError)
+async def embed_auth_failed(request: Request, exc: voyageai.error.AuthenticationError):
+    # Our misconfiguration, not the caller's fault -> still a 5xx, but say WHAT,
+    # so on-call reads the cause in the response instead of digging for it.
+    logger.error("embedding API auth failed: check VOYAGE_API_KEY")
+    return JSONResponse({"detail": "embedding API auth failed (server misconfigured)",
+                         "request_id": request_id_var.get()}, status_code=500)
+
+
+@app.exception_handler(voyageai.error.APIConnectionError)
+async def embed_unreachable(request: Request, exc: voyageai.error.APIConnectionError):
+    return JSONResponse({"detail": "embedding API unreachable",
+                         "request_id": request_id_var.get()}, status_code=502)
+
+
 # --- routes -----------------------------------------------------------------
 
 @app.get("/health")
@@ -124,6 +150,7 @@ async def ready() -> JSONResponse:
     except Exception as exc:
         checks["redis"] = type(exc).__name__
     checks["anthropic_key"] = "ok" if settings.anthropic_api_key else "missing"
+    checks["voyage_key"] = "ok" if settings.voyage_api_key else "missing"
     healthy = all(v == "ok" for v in checks.values())
     return JSONResponse(checks, status_code=200 if healthy else 503)
 

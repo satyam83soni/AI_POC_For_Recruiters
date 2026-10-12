@@ -1,7 +1,7 @@
 # RAG POC
 
 A small retrieval-augmented Q&A service on the LearnTube AI Backend stack:
-FastAPI, LangGraph, LangChain text splitters, Claude, Postgres + pgvector, Redis, Docker.
+FastAPI, LangGraph, LangChain text splitters, Claude (answers), Voyage AI (embeddings), Postgres + pgvector, Redis, Docker.
 
 Built to learn where this kind of system breaks, then drill debugging it against a 30-minute clock.
 
@@ -9,7 +9,7 @@ Built to learn where this kind of system breaks, then drill debugging it against
 
 ```powershell
 docker compose up -d --wait                        # Postgres :5433, Redis :6380
-copy .env.example .env                             # then put your key in ANTHROPIC_API_KEY
+copy .env.example .env                             # then set ANTHROPIC_API_KEY and VOYAGE_API_KEY
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
 .\.venv\Scripts\python.exe scripts\ingest_docs.py  # load data/docs
 .\.venv\Scripts\python.exe scripts\smoke.py        # 6 known questions, expect 6/6
@@ -26,7 +26,7 @@ POST /ask {"question": ...}
   ├─ cache.get_answer    Redis, key = model|top_k|corpus_version|q    app/cache.py
   │
   └─ rag_graph (LangGraph)                                            app/graph.py
-       retrieve ─► embed question (fastembed, in a thread)            app/embeddings.py
+       retrieve ─► embed question (Voyage API, input_type=query)      app/embeddings.py
                    ORDER BY embedding <=> q LIMIT k (HNSW index)      app/retrieval.py
                    drop chunks below min_similarity
           │
@@ -42,6 +42,8 @@ Ingest: `POST /ingest` → split (800 chars, 120 overlap) → embed → replace 
 | Symptom | First evidence |
 |---|---|
 | Every request slow at once | event loop blocked: a sync call in `async def` |
+| 503 on ingest or ask, `embed call` slow | Voyage rate limit / latency: `embed call` log lines |
+| `expected 1024 dimensions, not N` | `embed_dim` vs the `vector(N)` column vs the model |
 | Hangs, then pool timeout | `pool_timeout` errors, a session not closed or held across the LLM call |
 | Wrong or "not found" answers | `retrieval done` log: `top_similarity`, `kept` |
 | Slow search | `search_ms` in logs, `EXPLAIN ANALYZE` on the vector query |

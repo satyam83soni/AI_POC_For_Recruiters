@@ -1,51 +1,73 @@
 """
-Local embeddings with fastembed (ONNX, CPU).
+Embeddings via the Voyage AI API (Anthropic's recommended embeddings partner;
+Anthropic itself has no embeddings endpoint).
 
-The model call is SYNCHRONOUS and CPU-bound. Called directly inside an
-`async def`, it would freeze the event loop -- every other request, health
-checks included, would wait. So each call goes through asyncio.to_thread.
+Text goes out over HTTP, 1024 floats come back per input. Postgres never makes
+embeddings -- it only stores and compares the numbers this module produces.
 """
 
-import asyncio
 import logging
 import time
 
-from fastembed import TextEmbedding
+import voyageai
 
 from app.config import settings
 from app.logging import log
 
 logger = logging.getLogger(__name__)
 
-_model: TextEmbedding | None = None
+_client: voyageai.AsyncClient | None = None
 
 
-def load_model() -> None:
-    """Load once at startup. First run downloads ~130MB to the cache dir."""
-    global _model
-    start = time.perf_counter()
-    _model = TextEmbedding(model_name=settings.embed_model)
-    log(logger, "embedding model loaded", model=settings.embed_model,
-        ms=round((time.perf_counter() - start) * 1000))
+def init_client() -> None:
+    """Create one client at startup and reuse it (it owns a connection pool)."""
+    global _client
+    _client = voyageai.AsyncClient(
+        api_key=settings.voyage_api_key,
+        # The Voyage SDK defaults to max_retries=0 -- unlike the Anthropic SDK,
+        # which retries twice. Left at 0, a single 429 fails the request.
+        max_retries=settings.embed_max_retries,
+        timeout=settings.embed_timeout_s,
+    )
+    log(logger, "embedding client ready", model=settings.embed_model,
+        dim=settings.embed_dim)
 
 
-def _get() -> TextEmbedding:
-    if _model is None:
-        raise RuntimeError("embedding model not loaded; call load_model() at startup")
-    return _model
+def _get() -> voyageai.AsyncClient:
+    if _client is None:
+        raise RuntimeError("embedding client not initialised; call init_client() at startup")
+    return _client
 
 
-# bge models are trained asymmetrically: documents and queries get different
-# prefixes. passage_embed / query_embed apply the right one. Embedding a query
-# as a passage still "works" but retrieval quality quietly drops.
+async def _embed(texts: list[str], input_type: str) -> list[list[float]]:
+    client = _get()
+    vectors: list[list[float]] = []
+    # One API call per batch, not per text: 100 chunks = 1 request, not 100.
+    for i in range(0, len(texts), settings.embed_batch_size):
+        batch = texts[i : i + settings.embed_batch_size]
+        start = time.perf_counter()
+        result = await client.embed(
+            batch,
+            model=settings.embed_model,
+            # "document" for what we store, "query" for what users ask. Voyage
+            # prepends a different instruction for each; mixing them up still
+            # returns vectors, just worse matches -- a silent quality bug.
+            input_type=input_type,
+            # Must equal the vector(N) column size, or every INSERT fails.
+            output_dimension=settings.embed_dim,
+            # Default is True: over-long input is silently cut off. We would
+            # rather get an error than embed half a chunk without knowing.
+            truncation=False,
+        )
+        vectors.extend(result.embeddings)
+        log(logger, "embed call", input_type=input_type, n=len(batch),
+            tokens=result.total_tokens, ms=round((time.perf_counter() - start) * 1000))
+    return vectors
+
 
 async def embed_passages(texts: list[str]) -> list[list[float]]:
-    model = _get()
-    vectors = await asyncio.to_thread(lambda: list(model.passage_embed(texts)))
-    return [v.tolist() for v in vectors]
+    return await _embed(texts, "document")
 
 
 async def embed_query(text: str) -> list[float]:
-    model = _get()
-    vectors = await asyncio.to_thread(lambda: list(model.query_embed(text)))
-    return vectors[0].tolist()
+    return (await _embed([text], "query"))[0]
