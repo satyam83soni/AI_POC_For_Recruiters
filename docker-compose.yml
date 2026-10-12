@@ -1,0 +1,42 @@
+# Infra for the RAG service.
+#
+#   docker compose up -d        start Postgres (with pgvector) and Redis
+#   docker compose down -v      wipe both, start clean
+#
+# Ports are 5433 / 6380 so this never collides with the job-match project's
+# Postgres on 5432 or a Redis you already run on 6379.
+
+services:
+  db:
+    # The official Postgres image does NOT include pgvector. This image is
+    # Postgres 16 with the extension compiled in; we still have to run
+    # CREATE EXTENSION vector once per database (app/db.py does that).
+    image: pgvector/pgvector:pg16
+    container_name: rag-db
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+      POSTGRES_DB: rag
+    ports:
+      - "5433:5432"
+    volumes:
+      - ragdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: rag-redis
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  ragdata:
