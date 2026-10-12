@@ -76,11 +76,35 @@ async def request_context(request: Request, call_next):
     finally:
         request_id_var.reset(token)
     response.headers["x-request-id"] = rid
-    # The reset above already happened, so pass the id explicitly here.
-    logger.info("request", extra={"fields": {
-        "request_id": rid, "method": request.method, "path": request.url.path,
-        "status": response.status_code,
-        "ms": round((time.perf_counter() - start) * 1000)}})
+    headers_ms = round((time.perf_counter() - start) * 1000)
+
+    def log_request() -> None:
+        # The reset above already happened, so pass the id explicitly here.
+        logger.info("request", extra={"fields": {
+            "request_id": rid, "method": request.method, "path": request.url.path,
+            "status": response.status_code,
+            # headers_ms: when the status line went out. ms: when the LAST byte
+            # did. For JSON they're ~equal; for /ask/stream, headers go out in
+            # milliseconds and the body streams for seconds, so logging at
+            # call_next() time reported a 3.8 s stream as "ms: 2".
+            "headers_ms": headers_ms,
+            "ms": round((time.perf_counter() - start) * 1000)}})
+
+    body = getattr(response, "body_iterator", None)
+    if body is None:  # our own JSONResponse from the except branch: no stream
+        log_request()
+        return response
+
+    async def logged_body():
+        # Runs while the server sends the body; the finally fires after the
+        # last chunk -- or when the client disconnects mid-stream.
+        try:
+            async for chunk in body:
+                yield chunk
+        finally:
+            log_request()
+
+    response.body_iterator = logged_body()  # type: ignore[attr-defined]
     return response
 
 
