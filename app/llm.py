@@ -83,4 +83,7 @@ async def stream_answer(question: str, chunks: list[RetrievedChunk]) -> AsyncIte
         input_tokens=final.usage.input_tokens, output_tokens=final.usage.output_tokens,
         ttft_ms=round((first_token_at - start) * 1000) if first_token_at else None,
         total_ms=round((time.perf_counter() - start) * 1000),
-        request_id=final._request_id)
+        # final.id (msg_...) is on every response, streamed or not. The
+        # private _request_id is not set on beta stream results, and reading
+        # it crashed the request AFTER Claude had already answered.
+        message_id=final.id)
