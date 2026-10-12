@@ -202,9 +202,11 @@ async def ask_stream(body: AskRequest):
                 {"question": body.question, "top_k": body.top_k},
                 stream_mode=["custom", "updates"],
             ):
-                if mode == "custom":
+                # Chunks are typed loosely (Any) by LangGraph; check the shape
+                # before indexing instead of trusting it.
+                if mode == "custom" and isinstance(chunk, dict):
                     yield _sse("token", chunk)
-                elif mode == "updates" and "retrieve" in chunk:
+                elif mode == "updates" and isinstance(chunk, dict) and "retrieve" in chunk:
                     srcs = _sources(chunk["retrieve"]["chunks"])
                     yield _sse("sources", {"sources": [s.model_dump() for s in srcs]})
             yield _sse("done", {"request_id": rid})

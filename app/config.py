@@ -5,6 +5,8 @@ Every knob that changes RAG behaviour lives here, not scattered in code. In an
 incident, "what is chunk_size set to in prod?" should be one lookup.
 """
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,7 +27,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     llm_model: str = "claude-opus-5-5"
     # Grounded Q&A doesn't need deep reasoning; low effort = faster + cheaper.
-    llm_effort: str = "low"
+    # Literal: LLM_EFFORT=hgh in .env fails at startup, not on the first request.
+    llm_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
     llm_max_tokens: int = 2048
     llm_timeout_s: float = 60.0
     llm_max_retries: int = 2

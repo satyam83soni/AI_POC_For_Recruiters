@@ -9,20 +9,20 @@ embeddings -- it only stores and compares the numbers this module produces.
 import logging
 import time
 
-import voyageai
+from voyageai.client_async import AsyncClient
 
 from app.config import settings
 from app.logging import log
 
 logger = logging.getLogger(__name__)
 
-_client: voyageai.AsyncClient | None = None
+_client: AsyncClient | None = None
 
 
 def init_client() -> None:
     """Create one client at startup and reuse it (it owns a connection pool)."""
     global _client
-    _client = voyageai.AsyncClient(
+    _client = AsyncClient(
         api_key=settings.voyage_api_key,
         # The Voyage SDK defaults to max_retries=0 -- unlike the Anthropic SDK,
         # which retries twice. Left at 0, a single 429 fails the request.
@@ -33,7 +33,7 @@ def init_client() -> None:
         dim=settings.embed_dim)
 
 
-def _get() -> voyageai.AsyncClient:
+def _get() -> AsyncClient:
     if _client is None:
         raise RuntimeError("embedding client not initialised; call init_client() at startup")
     return _client
@@ -59,7 +59,9 @@ async def _embed(texts: list[str], input_type: str) -> list[list[float]]:
             # rather get an error than embed half a chunk without knowing.
             truncation=False,
         )
-        vectors.extend(result.embeddings)
+        # The SDK types this as floats OR ints (ints only for quantised
+        # output_dtype, which we don't request). float() makes it explicit.
+        vectors.extend([float(x) for x in v] for v in result.embeddings)
         log(logger, "embed call", input_type=input_type, n=len(batch),
             tokens=result.total_tokens, ms=round((time.perf_counter() - start) * 1000))
     return vectors

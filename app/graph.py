@@ -1,4 +1,4 @@
-"""
+r"""
 The RAG flow as a LangGraph state machine.
 
     START -> retrieve -> (any relevant chunks?) --yes--> generate -> END
@@ -9,7 +9,7 @@ Adding "grade the chunks", "rewrite the query and retry" or a tool call is one
 more node and one more edge, not a rewrite of nested ifs.
 """
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
@@ -18,11 +18,13 @@ from app import llm
 from app.retrieval import RetrievedChunk, retrieve
 
 
-class RAGState(TypedDict, total=False):
+class RAGState(TypedDict):
+    # Required: the caller must pass these in.
     question: str
     top_k: int
-    chunks: list[RetrievedChunk]
-    answer: str
+    # Filled in by nodes as the graph runs, so absent at the start.
+    chunks: NotRequired[list[RetrievedChunk]]
+    answer: NotRequired[str]
 
 
 async def retrieve_node(state: RAGState) -> dict:
@@ -35,7 +37,7 @@ async def generate_node(state: RAGState) -> dict:
     # while the node is still running. Under ainvoke() it is a no-op.
     write = get_stream_writer()
     parts: list[str] = []
-    async for token in llm.stream_answer(state["question"], state["chunks"]):
+    async for token in llm.stream_answer(state["question"], state.get("chunks", [])):
         parts.append(token)
         write({"token": token})
     return {"answer": "".join(parts)}
@@ -49,7 +51,7 @@ async def not_found_node(state: RAGState) -> dict:
 
 
 def route_after_retrieve(state: RAGState) -> str:
-    return "generate" if state["chunks"] else "not_found"
+    return "generate" if state.get("chunks") else "not_found"
 
 
 def build_graph():
