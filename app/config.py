@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     llm_model: str = "claude-opus-5-5"
     # Grounded Q&A doesn't need deep reasoning; low effort = faster + cheaper.
     # Literal: LLM_EFFORT=hgh in .env fails at startup, not on the first request.
-    llm_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
+    llm_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     llm_max_tokens: int = 2048
     llm_timeout_s: float = 60.0
     llm_max_retries: int = 2
@@ -53,10 +53,14 @@ class Settings(BaseSettings):
     # Cosine similarity floor. Below this a chunk is "not really relevant",
     # and answering from it is how a RAG system hallucinates confidently.
     # Calibrate, don't guess: each embedding model has its own score range.
-    # (With the earlier local bge-small model an off-topic question scored
-    # 0.41, so a 0.35 floor let it through.) Re-measure with
-    # `scripts/smoke.py --retrieval` whenever the embed model changes.
-    min_similarity: float = 0.55
+    # Measured with voyage-3.5-lite on this corpus:
+    #   off-topic questions     0.335 - 0.382
+    #   real on-topic matches   0.465 - 0.628
+    # 0.42 sits in that gap. (0.55, tuned for the old bge-small model,
+    # rejected real answers.) The margin is thin on 6 data points -- a real
+    # eval set, or a reranker, is the proper fix. Re-measure whenever the
+    # embed model or the corpus changes.
+    min_similarity: float = 0.42
     # Budget guard: hard cap on context characters sent to the LLM.
     max_context_chars: int = 12_000
 
