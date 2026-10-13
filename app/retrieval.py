@@ -20,6 +20,7 @@ class RetrievedChunk:
     source: str
     title: str
     content: str
+    chunk_index: int
     similarity: float
 
 
@@ -36,7 +37,7 @@ async def retrieve(question: str, top_k: int) -> list[RetrievedChunk]:
     # on the index; filtering the k results afterwards keeps it on the index.
     distance = Chunk.embedding.cosine_distance(qvec)
     stmt = (
-        select(Chunk.id, Chunk.content, Document.source, Document.title,
+        select(Chunk.id, Chunk.content, Document.source, Document.title, Chunk.chunk_index,
                (1 - distance).label("similarity"))
         .join(Document, Chunk.document_id == Document.id)
         .order_by(distance)
@@ -50,10 +51,11 @@ async def retrieve(question: str, top_k: int) -> list[RetrievedChunk]:
     t2 = time.perf_counter()
 
     hits = [
-        RetrievedChunk(r.id, r.source, r.title, r.content, round(float(r.similarity), 4))
+        RetrievedChunk(r.id, r.source, r.title, r.content, r.chunk_index, round(float(r.similarity), 4))
         for r in rows
     ]
     kept = [h for h in hits if h.similarity >= settings.min_similarity]
+    # kept.sort(key=lambda h: h.chunk_index, reverse=False)  
 
     log(logger, "retrieval done",
         embed_ms=round((t1 - t0) * 1000), search_ms=round((t2 - t1) * 1000),
