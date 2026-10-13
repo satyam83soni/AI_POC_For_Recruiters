@@ -32,6 +32,12 @@ async def retrieve(question: str, top_k: int) -> list[RetrievedChunk]:
     # <=> is cosine DISTANCE (0 = identical, 2 = opposite).
     # similarity = 1 - distance, so higher is better.
     #
+    # Change these four together or not at all: this operator, the similarity
+    # formula, the index opclass in db.py (vector_cosine_ops) and
+    # settings.min_similarity. L2 (<->) ranks unit vectors the same, but 1 - L2
+    # is a different scale (a cos-0.5 match scores 0), so the calibrated floor
+    # would reject everything -- and a cosine index can't serve <->.
+    #
     # ORDER BY distance LIMIT k is the exact shape the HNSW index serves.
     # Put the similarity threshold in WHERE instead and Postgres may give up
     # on the index; filtering the k results afterwards keeps it on the index.
@@ -55,7 +61,6 @@ async def retrieve(question: str, top_k: int) -> list[RetrievedChunk]:
         for r in rows
     ]
     kept = [h for h in hits if h.similarity >= settings.min_similarity]
-    # kept.sort(key=lambda h: h.chunk_index, reverse=False)  
 
     log(logger, "retrieval done",
         embed_ms=round((t1 - t0) * 1000), search_ms=round((t2 - t1) * 1000),

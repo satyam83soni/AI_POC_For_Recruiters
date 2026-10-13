@@ -186,6 +186,8 @@ async def ingest(body: IngestRequest, session: SessionDep):
 
 
 def _sources(chunks) -> list[Source]:
+    # Order is a contract: build_context numbers chunks [1], [2]... in this
+    # same order and the client maps [n] to sources[n-1]. Never re-sort here.
     return [Source(source=c.source, title=c.title, similarity=c.similarity)
             for c in chunks]
 
