@@ -27,27 +27,34 @@ def _normalise(question: str) -> str:
     return " ".join(question.lower().split()).rstrip("?")
 
 
-async def _key(question: str, top_k: int) -> str:
-    version = await client.get(CORPUS_VERSION_KEY) or "0"
+async def answer_key(question: str, top_k: int) -> str | None:
+    # Compute ONCE per request, before retrieval, and pass the same key to
+    # get_answer and set_answer. Re-deriving it at write time reads the corpus
+    # version again: an ingest that lands during the seconds the LLM takes
+    # would file an answer built from the OLD documents under the NEW version.
+    try:
+        version = await client.get(CORPUS_VERSION_KEY) or "0"
+    except redis.RedisError as exc:
+        # Cache is an optimisation. If Redis is down, answer without it
+        # rather than failing the request. None = skip the cache entirely.
+        log(logger, "cache read failed", logging.WARNING, error=type(exc).__name__)
+        return None
     raw = f"{settings.llm_model}|{top_k}|v{version}|{_normalise(question)}"
     return "rag:answer:" + hashlib.sha256(raw.encode()).hexdigest()
 
 
-async def get_answer(question: str, top_k: int) -> dict | None:
+async def get_answer(key: str) -> dict | None:
     try:
-        cached = await client.get(await _key(question, top_k))
+        cached = await client.get(key)
     except redis.RedisError as exc:
-        # Cache is an optimisation. If Redis is down, answer without it
-        # rather than failing the request.
         log(logger, "cache read failed", logging.WARNING, error=type(exc).__name__)
         return None
     return json.loads(cached) if cached else None
 
 
-async def set_answer(question: str, top_k: int, value: dict) -> None:
+async def set_answer(key: str, value: dict) -> None:
     try:
-        await client.set(await _key(question, top_k), json.dumps(value),
-                         ex=settings.cache_ttl_s)
+        await client.set(key, json.dumps(value), ex=settings.cache_ttl_s)
     except redis.RedisError as exc:
         log(logger, "cache write failed", logging.WARNING, error=type(exc).__name__)
 

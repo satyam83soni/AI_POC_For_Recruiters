@@ -194,7 +194,10 @@ def _sources(chunks) -> list[Source]:
 
 @app.post("/ask", response_model=AskResponse)
 async def ask(body: AskRequest):
-    hit = await cache.get_answer(body.question, body.top_k)
+    # One key for both read and write: it pins the corpus version this answer
+    # is computed against (see cache.answer_key).
+    key = await cache.answer_key(body.question, body.top_k)
+    hit = await cache.get_answer(key) if key else None
     if hit:
         log(logger, "cache hit")
         return AskResponse(**hit, cached=True)
@@ -204,8 +207,8 @@ async def ask(body: AskRequest):
               "sources": [s.model_dump() for s in _sources(state["chunks"])]}
 
     # Don't cache "not found": the document may be ingested a minute later.
-    if state["chunks"]:
-        await cache.set_answer(body.question, body.top_k, result)
+    if key and state["chunks"]:
+        await cache.set_answer(key, result)
     return AskResponse(**result, cached=False)
 
 
