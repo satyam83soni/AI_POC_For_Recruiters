@@ -31,9 +31,25 @@ POST /ask {"question": ...}
                    drop chunks below min_similarity
           │
           ├─ no chunks ─► not_found  (no LLM call)
-          └─ chunks ────► generate ─► numbered context, capped        app/llm.py
-                                      Claude streams tokens
+          └─ chunks ────► extract   cheap model (Haiku 5.5) -> JSON    app/llm.py
+                            │       {found, answer, citations}, schema
+                            │       enforced by structured outputs
+                            ▼
+                          validate  plain code: cited [n] exist, match     app/graph.py
+                            │       the citations list
+                            ├─ invalid, retry left ─► extract (told what failed)
+                            ├─ invalid / found=false ─► not_found
+                            ▼
+                          verify    heavy model (Opus 5.5) -> verdict      app/llm.py
+                                    {supported, issues, corrected_answer}
+                                    supported -> draft; corrected -> fix
+                                    (re-checked); else not_found
 ```
+
+`ANSWER_PIPELINE=stream` switches back to the single-model path: Opus writes the
+answer directly and `/ask/stream` sends it token by token. In the verified
+pipeline the answer only exists once the verifier passes it, so the stream
+carries it as one `token` event.
 
 Ingest: `POST /ingest` → split (800 chars, 120 overlap) → embed → replace the document's chunks → bump corpus version so cached answers go stale.
 
@@ -46,6 +62,7 @@ Ingest: `POST /ingest` → split (800 chars, 120 overlap) → embed → replace 
 | `expected 1024 dimensions, not N` | `embed_dim` vs the `vector(N)` column vs the model |
 | Hangs, then pool timeout | `pool_timeout` errors, a session not closed or held across the LLM call |
 | Wrong or "not found" answers | `retrieval done` log: `top_similarity`, `kept` |
+| "Not found" although retrieval kept chunks | `extraction validated` (`problems`) and `answer verified` (`outcome`, `issues`) logs |
 | Slow search | `search_ms` in logs, `EXPLAIN ANALYZE` on the vector query |
 | 503 / 504 from /ask | LLM rate limit / timeout handlers in `main.py` |
 | Stream stops mid-answer | `event: error` in the SSE stream + `stream failed` log |

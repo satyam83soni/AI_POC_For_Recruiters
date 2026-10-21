@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import cache, embeddings
+from app import cache, embeddings, llm
 from app.config import settings
 from app.db import engine, get_session, init_db
 from app.graph import rag_graph
@@ -50,7 +50,8 @@ async def lifespan(app: FastAPI):
         # generate node, on the first real question.
         log(logger, "ANTHROPIC_API_KEY not set: retrieval works, answers will fail",
             logging.WARNING)
-    log(logger, "startup complete", model=settings.llm_model)
+    log(logger, "startup complete", model=settings.llm_model,
+        pipeline=settings.answer_pipeline, extract_model=settings.extract_model)
     yield
     # Shutdown: close pools cleanly.
     await engine.dispose()
@@ -206,8 +207,9 @@ async def ask(body: AskRequest):
     result = {"answer": state["answer"],
               "sources": [s.model_dump() for s in _sources(state["chunks"])]}
 
-    # Don't cache "not found": the document may be ingested a minute later.
-    if key and state["chunks"]:
+    # Don't cache "not found": the document may be ingested a minute later,
+    # or (verified pipeline) the extraction failed validation this time only.
+    if key and state["chunks"] and state["answer"] != llm.NOT_FOUND:
         await cache.set_answer(key, result)
     return AskResponse(**result, cached=False)
 

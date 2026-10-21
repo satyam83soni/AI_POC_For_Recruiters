@@ -39,7 +39,10 @@ async def answer_key(question: str, top_k: int) -> str | None:
         # rather than failing the request. None = skip the cache entirely.
         log(logger, "cache read failed", logging.WARNING, error=type(exc).__name__)
         return None
-    raw = f"{settings.llm_model}|{top_k}|v{version}|{_normalise(question)}"
+    # Everything that changes the answer is in the key: switching pipeline or
+    # extract model must not serve answers the other setup produced.
+    raw = (f"{settings.llm_model}|{settings.answer_pipeline}|{settings.extract_model}"
+           f"|{top_k}|v{version}|{_normalise(question)}")
     return "rag:answer:" + hashlib.sha256(raw.encode()).hexdigest()
 
 

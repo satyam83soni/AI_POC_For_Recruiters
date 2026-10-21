@@ -33,6 +33,22 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 60.0
     llm_max_retries: int = 2
 
+    # --- answer pipeline -----------------------------------------------------
+    # "verified": a cheap model extracts a schema-checked answer, then
+    #             llm_model (the heavy one) verifies it against the context.
+    # "stream":   llm_model writes the answer directly, token by token.
+    # Verified trades time-to-first-token for a second opinion: the answer is
+    # only known after the verifier has passed it, so /ask/stream sends it as
+    # one token event instead of a trickle.
+    answer_pipeline: Literal["verified", "stream"] = "verified"
+    extract_model: str = "claude-haiku-5-5"
+    extract_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
+    # Thinking tokens count against this, so leave room above the JSON itself.
+    extract_max_tokens: int = 4096
+    # Extra extract attempts when the output fails validation. Each retry
+    # tells the model what was wrong with the previous attempt.
+    extract_max_retries: int = 1
+
     # --- embeddings (Voyage AI) ---------------------------------------------
     voyage_api_key: str | None = None
     embed_model: str = "voyage-3.5-lite"
